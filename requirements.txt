@@ -4,3 +4,4 @@ sqlalchemy>=2.0.20
 psycopg2-binary>=2.9.9
 python-multipart>=0.0.6
 PyPDF2==3.0.0
+openai>=1.31.0
