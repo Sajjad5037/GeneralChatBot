@@ -133,7 +133,7 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
     try:
         # Call OpenAI GPT-4.0-mini
         response = client.chat.completions.create(
-            model="gpt-4.0-mini",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
             max_tokens=500
