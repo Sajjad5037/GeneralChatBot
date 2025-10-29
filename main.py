@@ -44,7 +44,7 @@ app = FastAPI(title="Chatbot KB Backend")
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # replace with frontend URL in production
+    allow_origins=["https://class-management-system-new.web.app"],  # frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
