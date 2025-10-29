@@ -28,10 +28,11 @@ Base = declarative_base()
 class KnowledgeBase(Base):
     __tablename__ = "knowledgebases"
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)  # associate with doctor
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
+    
 # Create tables
 print("[DEBUG] Creating database tables if they don't exist...")
 Base.metadata.create_all(bind=engine)
