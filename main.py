@@ -67,7 +67,7 @@ def get_db():
 # ----------------------------
 @app.post("/api/knowledge-base/upload")
 async def upload_pdf(
-    user_id: int = Form(...),
+    user_id: int = Form(...),  # Read doctor/user ID from frontend
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
@@ -91,21 +91,21 @@ async def upload_pdf(
         print("[WARNING] PDF contains no readable text")
         raise HTTPException(status_code=400, detail="PDF contains no readable text")
 
-    # Check if KB already exists for this user
+    # Overwrite existing KB for the user if it exists
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.user_id == user_id).first()
     if kb:
+        print(f"[DEBUG] Overwriting existing knowledge base for user_id={user_id}, kb_id={kb.id}")
         kb.content = text
-        print(f"[DEBUG] Overwriting existing knowledge base: id={kb.id}")
     else:
         kb = KnowledgeBase(user_id=user_id, content=text)
         db.add(kb)
-        print("[DEBUG] Creating new knowledge base")
 
     db.commit()
     db.refresh(kb)
-    print(f"[DEBUG] Knowledge base saved: id={kb.id}, content_length={len(text)}")
+    print(f"[DEBUG] Knowledge base saved: id={kb.id}, user_id={kb.user_id}, content_length={len(text)}")
 
     return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully."}
+
 
 # ----------------------------
 # Get All Knowledge Bases (Public Chatbot)
