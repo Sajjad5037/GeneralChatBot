@@ -66,8 +66,12 @@ def get_db():
 # Upload PDF and Save Knowledge Base
 # ----------------------------
 @app.post("/api/knowledge-base/upload")
-async def upload_pdf(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    print(f"[DEBUG] Received upload request: filename={file.filename}, content_type={file.content_type}")
+async def upload_pdf(
+    user_id: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    print(f"[DEBUG] Received upload request: user_id={user_id}, filename={file.filename}, content_type={file.content_type}")
     
     # Extract text from PDF
     try:
@@ -87,9 +91,16 @@ async def upload_pdf(file: UploadFile = File(...), db: Session = Depends(get_db)
         print("[WARNING] PDF contains no readable text")
         raise HTTPException(status_code=400, detail="PDF contains no readable text")
 
-    # Save knowledge base
-    kb = KnowledgeBase(content=text)
-    db.add(kb)
+    # Check if KB already exists for this user
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.user_id == user_id).first()
+    if kb:
+        kb.content = text
+        print(f"[DEBUG] Overwriting existing knowledge base: id={kb.id}")
+    else:
+        kb = KnowledgeBase(user_id=user_id, content=text)
+        db.add(kb)
+        print("[DEBUG] Creating new knowledge base")
+
     db.commit()
     db.refresh(kb)
     print(f"[DEBUG] Knowledge base saved: id={kb.id}, content_length={len(text)}")
