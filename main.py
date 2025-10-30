@@ -115,7 +115,7 @@ async def upload_pdf(
 # ----------------------------
 #  (Public Chatbot)
 # ----------------------------
-
+#for clinics, saloon etc
 @app.post("/api/chat")
 def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depends(get_db)):
     print(f"[DEBUG] Received chat request: user_id={user_id}, message='{message}'")
@@ -149,6 +149,50 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
     except Exception as e:
         print(f"[ERROR] OpenAI API call failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
+
+# for general bussinesses
+@app.post("/api/chat-business")
+def chat(message: str = Body(...), username: str = Body(...), db: Session = Depends(get_db)):
+    print(f"[DEBUG] Received chat request: username='{username}', message='{message}'")
+
+    # Fetch doctor by username
+    doctor = db.query(Doctor).filter(Doctor.username == username).first()
+    if not doctor:
+        print(f"[WARNING] No doctor found with username='{username}'")
+        raise HTTPException(status_code=404, detail="Doctor not found")
+
+    print(f"[DEBUG] Doctor found: id={doctor.id}, name={doctor.name}")
+
+    # Fetch KB for this doctor
+    kb = db.query(KnowledgeBase).filter(KnowledgeBase.user_id == doctor.id).first()
+    if not kb:
+        print(f"[WARNING] No knowledge base found for user_id={doctor.id}")
+        return {"reply": "Sorry, I have no knowledge to answer this yet."}
+
+    print(f"[DEBUG] Knowledge base retrieved: id={kb.id}, content_length={len(kb.content)}")
+
+    # Build prompt using doctor's KB
+    prompt = f"You are Dr. {doctor.name}. Answer the question based on the knowledge below.\n\nKnowledge:\n{kb.content}\n\nUser: {message}"
+    print(f"[DEBUG] Prompt length: {len(prompt)} characters")
+
+    try:
+        # Call OpenAI GPT-4.0-mini
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=500
+        )
+
+        bot_reply = response.choices[0].message.content
+        print(f"[DEBUG] Bot reply length: {len(bot_reply)} characters")
+
+        return {"reply": bot_reply}
+
+    except Exception as e:
+        print(f"[ERROR] OpenAI API call failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
+
         
 # ----------------------------
 # Root endpoint
