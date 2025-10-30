@@ -9,6 +9,8 @@ import os
 import io
 from PyPDF2 import PdfReader
 from openai import OpenAI
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -154,6 +156,16 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         print(f"[ERROR] OpenAI API call failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
 """
+
+
+def chunk_text(text, chunk_size=500, overlap=50):
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        start += chunk_size - overlap
+    return chunks
 
 
 def embed_texts(texts):
