@@ -49,12 +49,14 @@ app = FastAPI(title="Chatbot KB Backend")
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://class-management-system-new.web.app"],  # frontend URL
+    allow_origins=[
+        "https://class-management-system-new.web.app",
+        "https://chat-for-me-ai-login.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # ----------------------------
 # Dependency to get DB session
 # ----------------------------
