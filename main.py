@@ -49,6 +49,16 @@ class KnowledgeBase(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class WhatsAppKnowledgeBase(Base):
+    __tablename__ = "WhatsAppknowledgebases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)        # associate with doctor
+    phone_number = Column(String(15), nullable=False)  # store phone number
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
 # Create tables
 print("[DEBUG] Creating database tables if they don't exist...")
@@ -125,6 +135,69 @@ async def upload_pdf(
     print(f"[DEBUG] Knowledge base saved: id={kb.id}, user_id={kb.user_id}, content_length={len(text)}")
 
     return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully."}
+
+
+@app.post("/api/whatsapp-knowledge-base/upload")
+async def upload_pdf(
+    user_id: int = Form(...),            # doctor/user ID
+    phone_number: str = Form(...),       # phone number from frontend
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    print(f"[DEBUG] Received upload request: user_id={user_id}, phone_number={phone_number}, filename={file.filename}, content_type={file.content_type}")
+
+    # --- Validate phone number format ---
+    import re
+    print(f"[DEBUG] Validating phone number format for: {phone_number}")
+    if not re.match(r"^03\d{9}$", phone_number):
+        print(f"[ERROR] Invalid phone number format: {phone_number}")
+        raise HTTPException(status_code=400, detail="Invalid phone number format. Must be like 03004112884.")
+    print("[DEBUG] Phone number format is valid.")
+
+    # --- Extract text from PDF ---
+    try:
+        file_bytes = await file.read()
+        print(f"[DEBUG] Read {len(file_bytes)} bytes from uploaded file")
+        reader = PdfReader(io.BytesIO(file_bytes))
+        text = ""
+        for i, page in enumerate(reader.pages):
+            page_text = page.extract_text() or ""
+            print(f"[DEBUG] Page {i+1}: extracted {len(page_text)} characters")
+            text += page_text
+    except Exception as e:
+        print(f"[ERROR] Failed to read PDF: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to read PDF: {e}")
+
+    if not text.strip():
+        print("[WARNING] PDF contains no readable text")
+        raise HTTPException(status_code=400, detail="PDF contains no readable text")
+    print(f"[DEBUG] Total extracted text length: {len(text)} characters")
+
+    # --- Check if a KB already exists for this user + phone number ---
+    kb = db.query(WhatsAppKnowledgeBase).filter(
+        WhatsAppKnowledgeBase.user_id == user_id,
+        WhatsAppKnowledgeBase.phone_number == phone_number
+    ).first()
+
+    if kb:
+        print(f"[DEBUG] Overwriting existing WhatsApp KB: kb_id={kb.id}")
+        kb.content = text
+    else:
+        print("[DEBUG] Creating new WhatsApp KB entry")
+        kb = WhatsAppKnowledgeBase(
+            user_id=user_id,
+            phone_number=phone_number,
+            content=text
+        )
+        db.add(kb)
+
+    # --- Commit to database ---
+    db.commit()
+    db.refresh(kb)
+    print(f"[DEBUG] WhatsApp knowledge base saved: id={kb.id}, user_id={kb.user_id}, phone_number={kb.phone_number}, content_length={len(text)}")
+
+    return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully."}
+
 
 
 """
