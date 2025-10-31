@@ -1,6 +1,7 @@
 # backend/main.py
 
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Body, Request
+import json
 from fastapi.responses import JSONResponse,PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Column, Integer, Text, DateTime, func, create_engine
