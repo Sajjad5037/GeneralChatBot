@@ -234,6 +234,7 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
 
 #IMPLEMENTING ENDPOINTS FOR WHATS APP CHATBOT
+"""
 @app.api_route("/webhook", methods=["GET", "POST"])
 async def webhook(request: Request):
     if request.method == "GET":
@@ -259,6 +260,87 @@ async def webhook(request: Request):
         except Exception as e:
             print("Error processing webhook:", e)
             return JSONResponse(content={"error": str(e)}, status_code=500)
+"""
+
+@app.route("/webhook", methods=["GET", "POST"])
+def webhook():
+    if request.method == "GET":
+        # --- Webhook verification ---
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
+        if mode == "subscribe" and token == webhook_verify_token:
+            print("Webhook verified successfully!")
+            return PlainTextResponse(content=challenge, status_code=200)
+        return PlainTextResponse(content="Webhook verification failed", status_code=403)
+
+    elif request.method == "POST":
+        try:
+            data = request.get_json(force=True)
+            print("Received webhook payload:", json.dumps(data, indent=2))
+
+            # --- Extract message ---
+            entry = data.get("entry", [])[0]
+            change = entry.get("changes", [])[0]
+            value = change.get("value", {})
+            messages = value.get("messages", [])
+
+            if not messages:
+                return jsonify({"status": "no message"}), 200
+
+            message = messages[0]
+            from_number = message["from"]
+            user_text = message.get("text", {}).get("body", "")
+            phone_number_id = value["metadata"]["phone_number_id"]
+
+            if not user_text:
+                return jsonify({"status": "empty message"}), 200
+
+            print(f"Message received from {from_number}: {user_text}")
+
+            # --- Chatbot personality: Sajjad’s personal assistant ---
+            completion = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an AI assistant created by Sajjad Ali Noor, "
+                            "a full-stack developer from Lahore with expertise in Python, FastAPI, "
+                            "and building intelligent systems such as chatbot integrations and "
+                            "clinic management tools. "
+                            "You represent Sajjad professionally — you answer politely, "
+                            "explain technical things clearly, and reflect his calm, thoughtful tone. "
+                            "If users ask about Sajjad, tell them he’s a developer focused on "
+                            "AI-powered web apps, problem-solving, and backend design."
+                        ),
+                    },
+                    {"role": "user", "content": user_text}
+                ]
+            )
+
+            bot_reply = completion.choices[0].message.content.strip()
+            print(f"AI Reply: {bot_reply}")
+
+            # --- Send reply back to WhatsApp ---
+            api_url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
+            headers = {
+                "Authorization": f"Bearer {whatsapp_access_token}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": from_number,
+                "type": "text",
+                "text": {"body": bot_reply}
+            }
+
+            requests.post(api_url, headers=headers, json=payload)
+            return jsonify({"status": "message processed"}), 200
+
+        except Exception as e:
+            print("Error processing webhook:", e)
+            return jsonify({"error": str(e)}), 500
 
 def send_whatsapp_message(recipient_number, message_text):
     api_url = f"https://graph.facebook.com/v22.0/{whatsapp_phone_number_id}/messages"
