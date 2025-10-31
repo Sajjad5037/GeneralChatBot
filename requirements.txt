@@ -1,17 +1,23 @@
+# Web framework
 fastapi>=0.118.0
 uvicorn[standard]>=0.23.0
+flask>=2.3.3
+
+# Database
 sqlalchemy>=2.0.20
 psycopg2-binary>=2.9.9
+
+# File upload & PDF
 python-multipart>=0.0.6
 PyPDF2==3.0.0
+
+# AI / ML
 openai>=1.31.0
-numpy>=1.25.0
-scikit-learn>=1.3.0
-requests>=2.31.0
 langchain>=0.1.0
 faiss-cpu>=1.7.4
+numpy>=1.25.0
+scikit-learn>=1.3.0
 
-
-flask
-requests
-python-dotenv
+# Environment & requests
+python-dotenv>=1.0.0
+requests>=2.31.0
