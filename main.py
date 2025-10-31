@@ -14,9 +14,6 @@ from openai import OpenAI
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import requests
-from langchain.vectorstores import FAISS
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
 whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
@@ -353,12 +350,9 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         mode = request.query_params.get("hub.mode")
         token = request.query_params.get("hub.verify_token")
         challenge = request.query_params.get("hub.challenge")
-        
         if mode == "subscribe" and token == webhook_verify_token:
             print("Webhook verified successfully!")
             return PlainTextResponse(content=challenge, status_code=200)
-        
-        print("Webhook verification failed")
         return PlainTextResponse(content="Webhook verification failed", status_code=403)
 
     elif request.method == "POST":
@@ -371,7 +365,6 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
             change = entry.get("changes", [])[0]
             value = change.get("value", {})
             messages = value.get("messages", [])
-
             if not messages:
                 return JSONResponse(content={"status": "no message"}, status_code=200)
 
@@ -379,48 +372,50 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
             from_number = message["from"]
             user_text = message.get("text", {}).get("body", "")
             phone_number_id = value["metadata"]["phone_number_id"]
-
             if not user_text:
                 return JSONResponse(content={"status": "empty message"}, status_code=200)
 
             print(f"Message received from {from_number}: {user_text}")
 
-            # --- Retrieve KB content from DB ---
+            # --- Fetch KB for this WhatsApp number ---
             kb_entries = db.query(WhatsAppKnowledgeBase)\
                            .filter(WhatsAppKnowledgeBase.phone_number == from_number)\
                            .all()
             kb_text = "\n".join([kb.content for kb in kb_entries]) if kb_entries else ""
-            print(f"[DEBUG] Retrieved KB content ({len(kb_text)} chars) for {from_number}")
+            if not kb_text.strip():
+                print(f"[WARNING] No knowledge base content for {from_number}")
+                return JSONResponse(content={"reply": "Sorry, I have no knowledge to answer this yet."}, status_code=200)
 
-            # --- Retrieve relevant context using vector store helper ---
-            relevant_context = get_relevant_context(kb_text, user_text)
-            print(f"[DEBUG] Relevant context ({len(relevant_context)} chars): {relevant_context[:200]}...")
+            # --- Build temporary vector store ---
+            if from_number not in vector_stores:
+                chunks = chunk_text(kb_text, chunk_size=500, overlap=50)
+                embeddings = embed_texts(chunks)
+                vector_stores[from_number] = {"chunks": chunks, "embeddings": np.array(embeddings)}
+                print(f"[DEBUG] Vector store created for {from_number} with {len(chunks)} chunks")
 
-            # --- Chatbot system prompt including relevant KB ---
-            system_prompt = (
-                "You are an AI assistant created by Sajjad Ali Noor, "
-                "a full-stack developer from Lahore with expertise in Python, FastAPI, "
-                "and building intelligent systems such as chatbot integrations and "
-                "clinic management tools. "
-                "You represent Sajjad professionally — answer politely, explain technical things clearly, "
-                "and reflect his calm, thoughtful tone. "
-                "If users ask about Sajjad, tell them he’s a developer focused on AI-powered web apps, "
-                "problem-solving, and backend design.\n\n"
-                f"Relevant knowledge base context:\n{relevant_context}"
-            )
+            store = vector_stores[from_number]
 
-            completion = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_text}
-                ],
-                temperature=0.3,
+            # --- Embed user query & find most similar chunk ---
+            query_embedding = np.array(embed_texts([user_text])[0])
+            sims = cosine_similarity([query_embedding], store["embeddings"])[0]
+            top_idx = sims.argmax()
+            relevant_chunk = store["chunks"][top_idx]
+            print(f"[DEBUG] Top chunk index: {top_idx}, similarity: {sims[top_idx]:.4f}")
+
+            # --- Build prompt with relevant KB context ---
+            prompt = f"You are an AI assistant. Answer the question based on the knowledge below.\n\nKnowledge:\n{relevant_chunk}\n\nUser: {user_text}"
+            print(f"[DEBUG] Prompt length: {len(prompt)} characters")
+
+            # --- Generate AI reply ---
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
                 max_tokens=500
             )
 
-            bot_reply = completion.choices[0].message.content.strip()
-            print(f"AI Reply: {bot_reply}")
+            bot_reply = response.choices[0].message.content
+            print(f"[DEBUG] Bot reply length: {len(bot_reply)} characters")
 
             # --- Send reply back to WhatsApp ---
             api_url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
@@ -435,6 +430,7 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
                 "text": {"body": bot_reply}
             }
 
+            import requests
             resp = requests.post(api_url, headers=headers, json=payload)
             print("WhatsApp API response:", resp.json())
 
