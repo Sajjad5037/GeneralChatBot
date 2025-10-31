@@ -233,39 +233,40 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
 
 #IMPLEMENTING ENDPOINTS FOR WHATS APP CHATBOT
-@app.route("/webhook", methods=["GET"])
-def verify_webhook():
-    mode = request.args.get("hub.mode")
-    token = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
+@app.route("/webhook", methods=["GET", "POST"])
+def webhook():
+    if request.method == "GET":
+        # Verification
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
+        if mode == "subscribe" and token == webhook_verify_token:
+            print("Webhook successfully verified!")
+            return challenge, 200
+        return "Webhook verification failed", 403
 
-    if mode == "subscribe" and token == webhook_verify_token:
-        print("Webhook successfully verified!")
-        return challenge, 200
+    elif request.method == "POST":
+        try:
+            webhook_payload = request.get_json(force=True)  # ensures JSON object
+            print("Received webhook payload:", json.dumps(webhook_payload, indent=2))
 
-    return "Webhook verification failed", 403
+            for entry in webhook_payload.get("entry", []):
+                for change in entry.get("changes", []):
+                    value = change.get("value", {})
+                    messages = value.get("messages", [])
+                    for message in messages:
+                        sender_number = message["from"]
+                        message_text = message.get("text", {}).get("body", "")
+                        print(f"Message received from {sender_number}: {message_text}")
+                        if message_text:
+                            send_whatsapp_message(sender_number, f"Echo: {message_text}")
 
-# --- Webhook for incoming messages (POST) ---
-@app.route("/webhook", methods=["POST"])
-def handle_incoming_messages():
-    webhook_payload = request.json
-    print("Received webhook payload:", json.dumps(webhook_payload, indent=2))
+            return jsonify({"status": "received"}), 200
 
-    for entry in webhook_payload.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            messages = value.get("messages", [])
+        except Exception as e:
+            print("Error processing webhook:", e)
+            return jsonify({"error": str(e)}), 500
 
-            for message in messages:
-                sender_number = message["from"]  # Number sending message to chatbot
-                message_text = message.get("text", {}).get("body", "")
-                print(f"Message received from {sender_number}: {message_text}")
-
-                # Auto-reply with same text
-                if message_text:
-                    send_whatsapp_message(sender_number, f"Echo: {message_text}")
-
-    return jsonify({"status": "received"}), 200
 
 def send_whatsapp_message(recipient_number, message_text):
     api_url = f"https://graph.facebook.com/v22.0/{whatsapp_phone_number_id}/messages"
