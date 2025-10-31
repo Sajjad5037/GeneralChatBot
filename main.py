@@ -236,33 +236,24 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":
-        # Verification
         mode = request.args.get("hub.mode")
         token = request.args.get("hub.verify_token")
         challenge = request.args.get("hub.challenge")
+        print("GET verification request:", mode, token, challenge)
+
         if mode == "subscribe" and token == webhook_verify_token:
-            print("Webhook successfully verified!")
+            print("Webhook verified successfully!")
             return challenge, 200
+
+        print("Webhook verification failed")
         return "Webhook verification failed", 403
 
     elif request.method == "POST":
         try:
-            webhook_payload = request.get_json(force=True)  # ensures JSON object
+            webhook_payload = request.get_json(force=True)
             print("Received webhook payload:", json.dumps(webhook_payload, indent=2))
-
-            for entry in webhook_payload.get("entry", []):
-                for change in entry.get("changes", []):
-                    value = change.get("value", {})
-                    messages = value.get("messages", [])
-                    for message in messages:
-                        sender_number = message["from"]
-                        message_text = message.get("text", {}).get("body", "")
-                        print(f"Message received from {sender_number}: {message_text}")
-                        if message_text:
-                            send_whatsapp_message(sender_number, f"Echo: {message_text}")
-
+            # Handle messages here
             return jsonify({"status": "received"}), 200
-
         except Exception as e:
             print("Error processing webhook:", e)
             return jsonify({"error": str(e)}), 500
