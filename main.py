@@ -450,8 +450,8 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
 
             # --- Fetch KB for this WhatsApp number ---
             kb_entries = db.query(WhatsAppKnowledgeBase)\
-                           .filter(WhatsAppKnowledgeBase.phone_number == from_number)\
-                           .all()
+               .filter(WhatsAppKnowledgeBase.chatbot_number == phone_number_id)\
+               .all()
             kb_text = "\n".join([kb.content for kb in kb_entries]) if kb_entries else ""
             if not kb_text.strip():
                 print(f"[WARNING] No knowledge base content for {from_number}")
