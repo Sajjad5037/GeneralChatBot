@@ -233,31 +233,31 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
 
 #IMPLEMENTING ENDPOINTS FOR WHATS APP CHATBOT
-@app.route("/webhook", methods=["GET", "POST"])
-def webhook():
+@app.api_route("/webhook", methods=["GET", "POST"])
+async def webhook(request: Request):
     if request.method == "GET":
-        mode = request.args.get("hub.mode")
-        token = request.args.get("hub.verify_token")
-        challenge = request.args.get("hub.challenge")
+        # Verification
+        mode = request.query_params.get("hub.mode")
+        token = request.query_params.get("hub.verify_token")
+        challenge = request.query_params.get("hub.challenge")
         print("GET verification request:", mode, token, challenge)
 
         if mode == "subscribe" and token == webhook_verify_token:
             print("Webhook verified successfully!")
-            return challenge, 200
+            return PlainTextResponse(content=challenge, status_code=200)
 
         print("Webhook verification failed")
-        return "Webhook verification failed", 403
+        return PlainTextResponse(content="Webhook verification failed", status_code=403)
 
     elif request.method == "POST":
         try:
-            webhook_payload = request.get_json(force=True)
-            print("Received webhook payload:", json.dumps(webhook_payload, indent=2))
-            # Handle messages here
-            return jsonify({"status": "received"}), 200
+            webhook_payload = await request.json()
+            print("Received webhook payload:", webhook_payload)
+            # Handle incoming messages here
+            return JSONResponse(content={"status": "received"}, status_code=200)
         except Exception as e:
             print("Error processing webhook:", e)
-            return jsonify({"error": str(e)}), 500
-
+            return JSONResponse(content={"error": str(e)}, status_code=500)
 
 def send_whatsapp_message(recipient_number, message_text):
     api_url = f"https://graph.facebook.com/v22.0/{whatsapp_phone_number_id}/messages"
@@ -276,14 +276,14 @@ def send_whatsapp_message(recipient_number, message_text):
     return response
 
 # --- Optional route to manually send messages ---
-@app.route("/send_message", methods=["POST"])
-def manual_send_message():
-    request_data = request.json
+@app.post("/send_message")
+async def manual_send_message(request: Request):
+    request_data = await request.json()
     recipient_number = request_data.get("to")
     message_body = request_data.get("body", "Hello from WhatsApp Demo!")
 
-    return send_whatsapp_message(recipient_number, message_body).text
-
+    resp = send_whatsapp_message(recipient_number, message_body)
+    return JSONResponse(content={"response": resp.json()})
         
 # ----------------------------
 # Root endpoint
