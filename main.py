@@ -146,17 +146,8 @@ async def upload_pdf(
     db: Session = Depends(get_db)
 ):
     print(f"[DEBUG] Received upload request: user_id={user_id}, phone_number={phone_number}, filename={file.filename}, content_type={file.content_type}")
-    if phone_number.startswith("0"):
-        phone_number = "92" + phone_number[1:]
-    print(f"[DEBUG] Normalized phone number: {phone_number}")
-
-     # --- Validate original number ---
-    if not re.match(r"^03\d{9}$", phone_number):
-        raise HTTPException(status_code=400, detail="Invalid phone number format. Must be like 03004112884.")
-
-    # --- Convert to international format for DB ---
-    phone_number = "92" + phone_number[1:]
-    print(f"[DEBUG] Converted phone number for DB: {phone_number}")
+    
+    
     # --- Extract text from PDF ---
     try:
         file_bytes = await file.read()
