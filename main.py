@@ -138,6 +138,83 @@ async def upload_pdf(
     return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully."}
 
 
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from sqlalchemy.orm import Session
+from PyPDF2 import PdfReader
+import io
+
+app = FastAPI()
+
+# --- Dependency ---
+def get_db():
+    # your DB session creation logic here
+    pass
+
+# --- Database model example ---
+# class WhatsAppKnowledgeBase(Base):
+#     id: int
+#     user_id: int
+#     chatbot_number: str
+#     content: str
+
+@app.post("/api/whatsapp-knowledge-base/upload")
+async def upload_pdf(
+    user_id: int = Form(...),            # client/user ID
+    chatbot_number: str = Form(...),     # the WhatsApp number acting as chatbot
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    print(f"[DEBUG] Received upload request: user_id={user_id}, chatbot_number={chatbot_number}, filename={file.filename}, content_type={file.content_type}")
+
+    # --- Extract text from PDF ---
+    try:
+        file_bytes = await file.read()
+        print(f"[DEBUG] Read {len(file_bytes)} bytes from uploaded file")
+        reader = PdfReader(io.BytesIO(file_bytes))
+        text = ""
+        for i, page in enumerate(reader.pages):
+            page_text = page.extract_text() or ""
+            print(f"[DEBUG] Page {i+1}: extracted {len(page_text)} characters")
+            text += page_text
+    except Exception as e:
+        print(f"[ERROR] Failed to read PDF: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to read PDF: {e}")
+
+    if not text.strip():
+        print("[WARNING] PDF contains no readable text")
+        raise HTTPException(status_code=400, detail="PDF contains no readable text")
+    
+    print(f"[DEBUG] Total extracted text length: {len(text)} characters")
+
+    # --- Check if a KB already exists for this client + chatbot number ---
+    kb = db.query(WhatsAppKnowledgeBase).filter(
+        WhatsAppKnowledgeBase.user_id == user_id,
+        WhatsAppKnowledgeBase.chatbot_number == chatbot_number
+    ).first()
+
+    if kb:
+        print(f"[DEBUG] Overwriting existing WhatsApp KB: kb_id={kb.id}")
+        kb.content = text
+    else:
+        print("[DEBUG] Creating new WhatsApp KB entry")
+        kb = WhatsAppKnowledgeBase(
+            user_id=user_id,
+            chatbot_number=chatbot_number,
+            content=text
+        )
+        db.add(kb)
+
+    # --- Commit to database ---
+    db.commit()
+    db.refresh(kb)
+    print(f"[DEBUG] WhatsApp knowledge base saved: id={kb.id}, user_id={kb.user_id}, chatbot_number={kb.chatbot_number}, content_length={len(text)}")
+
+    return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully."}
+
+
+
+"""
+
 @app.post("/api/whatsapp-knowledge-base/upload")
 async def upload_pdf(
     user_id: int = Form(...),            # doctor/user ID
@@ -191,7 +268,7 @@ async def upload_pdf(
     print(f"[DEBUG] WhatsApp knowledge base saved: id={kb.id}, user_id={kb.user_id}, phone_number={kb.phone_number}, content_length={len(text)}")
 
     return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully."}
-
+"""
 
 
 """
