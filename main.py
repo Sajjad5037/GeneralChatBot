@@ -415,49 +415,59 @@ def get_relevant_context(kb_text: str, user_query: str, top_k: int = 3) -> str:
     return context
 
 @app.api_route("/webhook", methods=["GET", "POST"])
-async def webhook(request: Request, db: Session = Depends(get_db)):
+async def webhook(request: Request):
+    # -------------------- GET: Verification --------------------
     if request.method == "GET":
-        # --- Webhook verification ---
         mode = request.query_params.get("hub.mode")
         token = request.query_params.get("hub.verify_token")
         challenge = request.query_params.get("hub.challenge")
+        print(f"[DEBUG] GET verification request: mode={mode}, token={token}, challenge={challenge}")
+
         if mode == "subscribe" and token == webhook_verify_token:
-            print("Webhook verified successfully!")
+            print("[DEBUG] Webhook verified successfully!")
             return PlainTextResponse(content=challenge, status_code=200)
+
+        print("[WARNING] Webhook verification failed")
         return PlainTextResponse(content="Webhook verification failed", status_code=403)
 
+    # -------------------- POST: Handle incoming messages --------------------
     elif request.method == "POST":
         try:
             data = await request.json()
-            print("Received webhook payload:", json.dumps(data, indent=2))
+            print("[DEBUG] Received webhook payload:", json.dumps(data, indent=2))
 
-            # --- Extract message ---
+            # Extract message
             entry = data.get("entry", [])[0]
             change = entry.get("changes", [])[0]
             value = change.get("value", {})
             messages = value.get("messages", [])
+
             if not messages:
                 return JSONResponse(content={"status": "no message"}, status_code=200)
 
             message = messages[0]
-            from_number = message["from"]
+            from_number = message.get("from")
             user_text = message.get("text", {}).get("body", "")
-            phone_number_id = value["metadata"]["phone_number_id"]
+            phone_number_id = value.get("metadata", {}).get("phone_number_id")
+
             if not user_text:
                 return JSONResponse(content={"status": "empty message"}, status_code=200)
 
-            print(f"Message received from {from_number}: {user_text}")
+            print(f"[DEBUG] Message received from {from_number}: {user_text}")
 
-            # --- Fetch KB for this WhatsApp number ---
-            kb_entries = db.query(WhatsAppKnowledgeBase)\
-               .filter(WhatsAppKnowledgeBase.chatbot_number == phone_number_id)\
-               .all()
-            kb_text = "\n".join([kb.content for kb in kb_entries]) if kb_entries else ""
+            # --- Open DB session safely ---
+            with SessionLocal() as db:
+                # Fetch KB based on chatbot number
+                kb_entries = db.query(WhatsAppKnowledgeBase)\
+                               .filter(WhatsAppKnowledgeBase.chatbot_number == phone_number_id)\
+                               .all()
+                kb_text = "\n".join([kb.content for kb in kb_entries]) if kb_entries else ""
+
             if not kb_text.strip():
-                print(f"[WARNING] No knowledge base content for {from_number}")
+                print(f"[WARNING] No knowledge base content for chatbot {phone_number_id}")
                 return JSONResponse(content={"reply": "Sorry, I have no knowledge to answer this yet."}, status_code=200)
 
-            # --- Build temporary vector store ---
+            # --- Build temporary vector store per user ---
             if from_number not in vector_stores:
                 chunks = chunk_text(kb_text, chunk_size=500, overlap=50)
                 embeddings = embed_texts(chunks)
@@ -466,29 +476,28 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
 
             store = vector_stores[from_number]
 
-            # --- Embed user query & find most similar chunk ---
+            # Embed user query & find most similar chunk
             query_embedding = np.array(embed_texts([user_text])[0])
             sims = cosine_similarity([query_embedding], store["embeddings"])[0]
             top_idx = sims.argmax()
             relevant_chunk = store["chunks"][top_idx]
             print(f"[DEBUG] Top chunk index: {top_idx}, similarity: {sims[top_idx]:.4f}")
 
-            # --- Build prompt with relevant KB context ---
+            # Build prompt
             prompt = f"You are an AI assistant. Answer the question based on the knowledge below.\n\nKnowledge:\n{relevant_chunk}\n\nUser: {user_text}"
             print(f"[DEBUG] Prompt length: {len(prompt)} characters")
 
-            # --- Generate AI reply ---
+            # Generate AI reply
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
                 max_tokens=500
             )
-
             bot_reply = response.choices[0].message.content
             print(f"[DEBUG] Bot reply length: {len(bot_reply)} characters")
 
-            # --- Send reply back to WhatsApp ---
+            # Send reply to WhatsApp
             api_url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
             headers = {
                 "Authorization": f"Bearer {whatsapp_access_token}",
@@ -500,16 +509,15 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
                 "type": "text",
                 "text": {"body": bot_reply}
             }
-
-            import requests
             resp = requests.post(api_url, headers=headers, json=payload)
-            print("WhatsApp API response:", resp.json())
+            print("[DEBUG] WhatsApp API response:", resp.json())
 
             return JSONResponse(content={"status": "message processed"}, status_code=200)
 
         except Exception as e:
-            print("Error processing webhook:", e)
+            print("[ERROR] Error processing webhook:", e)
             return JSONResponse(content={"error": str(e)}, status_code=500)
+
 
 """
 @app.api_route("/webhook", methods=["GET", "POST"])
