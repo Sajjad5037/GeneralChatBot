@@ -458,8 +458,10 @@ async def webhook(request: Request):
             # --- Open DB session safely ---
             with SessionLocal() as db:
                 # Fetch KB based on chatbot number
+                display_number = value["metadata"]["display_phone_number"]  # "+1 555 140 8854"
+
                 kb_entries = db.query(WhatsAppKnowledgeBase)\
-                               .filter(WhatsAppKnowledgeBase.chatbot_number == phone_number_id)\
+                               .filter(WhatsAppKnowledgeBase.chatbot_number == display_number)\
                                .all()
                 kb_text = "\n".join([kb.content for kb in kb_entries]) if kb_entries else ""
 
