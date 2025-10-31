@@ -14,7 +14,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
 whatsapp_phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-webhook_verify_token = os.getenv("WHATSAPP_VERIFY_TOKEN")
+webhook_verify_token = os.getenv("webhook_verify_token")
 
 
 
