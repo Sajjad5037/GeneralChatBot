@@ -12,6 +12,12 @@ from openai import OpenAI
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
+whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
+whatsapp_phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+webhook_verify_token = os.getenv("WHATSAPP_VERIFY_TOKEN")
+
+
+
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 vector_stores = {} 
@@ -225,6 +231,66 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
     except Exception as e:
         print(f"[ERROR] OpenAI API call failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
+
+#IMPLEMENTING ENDPOINTS FOR WHATS APP CHATBOT
+@app.route("/webhook", methods=["GET"])
+def verify_webhook():
+    mode = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+
+    if mode == "subscribe" and token == webhook_verify_token:
+        print("Webhook successfully verified!")
+        return challenge, 200
+
+    return "Webhook verification failed", 403
+
+# --- Webhook for incoming messages (POST) ---
+@app.route("/webhook", methods=["POST"])
+def handle_incoming_messages():
+    webhook_payload = request.json
+    print("Received webhook payload:", json.dumps(webhook_payload, indent=2))
+
+    for entry in webhook_payload.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            messages = value.get("messages", [])
+
+            for message in messages:
+                sender_number = message["from"]  # Number sending message to chatbot
+                message_text = message.get("text", {}).get("body", "")
+                print(f"Message received from {sender_number}: {message_text}")
+
+                # Auto-reply with same text
+                if message_text:
+                    send_whatsapp_message(sender_number, f"Echo: {message_text}")
+
+    return jsonify({"status": "received"}), 200
+
+def send_whatsapp_message(recipient_number, message_text):
+    api_url = f"https://graph.facebook.com/v22.0/{whatsapp_phone_number_id}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_number,
+        "type": "text",
+        "text": {"body": message_text}
+    }
+    headers = {
+        "Authorization": f"Bearer {whatsapp_access_token}",
+        "Content-Type": "application/json"
+    }
+    response = requests.post(api_url, headers=headers, data=json.dumps(payload))
+    print("WhatsApp API response:", response.json())
+    return response
+
+# --- Optional route to manually send messages ---
+@app.route("/send_message", methods=["POST"])
+def manual_send_message():
+    request_data = request.json
+    recipient_number = request_data.get("to")
+    message_body = request_data.get("body", "Hello from WhatsApp Demo!")
+
+    return send_whatsapp_message(recipient_number, message_body).text
 
         
 # ----------------------------
