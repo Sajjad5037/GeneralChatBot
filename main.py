@@ -14,6 +14,7 @@ from openai import OpenAI
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import requests
+import re
 
 
 whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
