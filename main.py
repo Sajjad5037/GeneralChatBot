@@ -13,6 +13,8 @@ from PyPDF2 import PdfReader
 from openai import OpenAI
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+import requests
+
 
 whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
 whatsapp_phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
