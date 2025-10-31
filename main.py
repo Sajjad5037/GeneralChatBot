@@ -14,6 +14,9 @@ from openai import OpenAI
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import requests
+from langchain.vectorstores import FAISS
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
 whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
@@ -310,6 +313,137 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
 
 #IMPLEMENTING ENDPOINTS FOR WHATS APP CHATBOT
+def get_relevant_context(kb_text: str, user_query: str, top_k: int = 3) -> str:
+    """
+    Create a temporary vector store from kb_text and retrieve relevant context
+    for the user query.
+    
+    :param kb_text: Full text from WhatsAppKnowledgeBase for a user
+    :param user_query: The incoming user message
+    :param top_k: Number of most relevant chunks to retrieve
+    :return: Concatenated relevant context string
+    """
+    if not kb_text.strip():
+        return ""  # no KB content available
+    
+    # --- 1. Split KB text into chunks ---
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,   # adjust based on token limits
+        chunk_overlap=50
+    )
+    chunks = text_splitter.split_text(kb_text)
+    
+    # --- 2. Embed the chunks ---
+    embeddings = OpenAIEmbeddings()
+    
+    # --- 3. Create temporary FAISS vector store ---
+    vector_store = FAISS.from_texts(chunks, embeddings)
+    
+    # --- 4. Retrieve top_k relevant chunks ---
+    results = vector_store.similarity_search(user_query, k=top_k)
+    
+    # Combine retrieved chunks into a single string
+    context = "\n".join([r.page_content for r in results])
+    return context
+
+@app.api_route("/webhook", methods=["GET", "POST"])
+async def webhook(request: Request, db: Session = Depends(get_db)):
+    if request.method == "GET":
+        # --- Webhook verification ---
+        mode = request.query_params.get("hub.mode")
+        token = request.query_params.get("hub.verify_token")
+        challenge = request.query_params.get("hub.challenge")
+        
+        if mode == "subscribe" and token == webhook_verify_token:
+            print("Webhook verified successfully!")
+            return PlainTextResponse(content=challenge, status_code=200)
+        
+        print("Webhook verification failed")
+        return PlainTextResponse(content="Webhook verification failed", status_code=403)
+
+    elif request.method == "POST":
+        try:
+            data = await request.json()
+            print("Received webhook payload:", json.dumps(data, indent=2))
+
+            # --- Extract message ---
+            entry = data.get("entry", [])[0]
+            change = entry.get("changes", [])[0]
+            value = change.get("value", {})
+            messages = value.get("messages", [])
+
+            if not messages:
+                return JSONResponse(content={"status": "no message"}, status_code=200)
+
+            message = messages[0]
+            from_number = message["from"]
+            user_text = message.get("text", {}).get("body", "")
+            phone_number_id = value["metadata"]["phone_number_id"]
+
+            if not user_text:
+                return JSONResponse(content={"status": "empty message"}, status_code=200)
+
+            print(f"Message received from {from_number}: {user_text}")
+
+            # --- Retrieve KB content from DB ---
+            kb_entries = db.query(WhatsAppKnowledgeBase)\
+                           .filter(WhatsAppKnowledgeBase.phone_number == from_number)\
+                           .all()
+            kb_text = "\n".join([kb.content for kb in kb_entries]) if kb_entries else ""
+            print(f"[DEBUG] Retrieved KB content ({len(kb_text)} chars) for {from_number}")
+
+            # --- Retrieve relevant context using vector store helper ---
+            relevant_context = get_relevant_context(kb_text, user_text)
+            print(f"[DEBUG] Relevant context ({len(relevant_context)} chars): {relevant_context[:200]}...")
+
+            # --- Chatbot system prompt including relevant KB ---
+            system_prompt = (
+                "You are an AI assistant created by Sajjad Ali Noor, "
+                "a full-stack developer from Lahore with expertise in Python, FastAPI, "
+                "and building intelligent systems such as chatbot integrations and "
+                "clinic management tools. "
+                "You represent Sajjad professionally — answer politely, explain technical things clearly, "
+                "and reflect his calm, thoughtful tone. "
+                "If users ask about Sajjad, tell them he’s a developer focused on AI-powered web apps, "
+                "problem-solving, and backend design.\n\n"
+                f"Relevant knowledge base context:\n{relevant_context}"
+            )
+
+            completion = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_text}
+                ],
+                temperature=0.3,
+                max_tokens=500
+            )
+
+            bot_reply = completion.choices[0].message.content.strip()
+            print(f"AI Reply: {bot_reply}")
+
+            # --- Send reply back to WhatsApp ---
+            api_url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
+            headers = {
+                "Authorization": f"Bearer {whatsapp_access_token}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": from_number,
+                "type": "text",
+                "text": {"body": bot_reply}
+            }
+
+            resp = requests.post(api_url, headers=headers, json=payload)
+            print("WhatsApp API response:", resp.json())
+
+            return JSONResponse(content={"status": "message processed"}, status_code=200)
+
+        except Exception as e:
+            print("Error processing webhook:", e)
+            return JSONResponse(content={"error": str(e)}, status_code=500)
+
 """
 @app.api_route("/webhook", methods=["GET", "POST"])
 async def webhook(request: Request):
@@ -336,7 +470,7 @@ async def webhook(request: Request):
         except Exception as e:
             print("Error processing webhook:", e)
             return JSONResponse(content={"error": str(e)}, status_code=500)
-"""
+
 
 @app.api_route("/webhook", methods=["GET", "POST"])
 async def webhook(request: Request):
@@ -424,6 +558,7 @@ async def webhook(request: Request):
         except Exception as e:
             print("Error processing webhook:", e)
             return JSONResponse(content={"error": str(e)}, status_code=500)
+"""
 
 def send_whatsapp_message(recipient_number, message_text):
     api_url = f"https://graph.facebook.com/v22.0/{whatsapp_phone_number_id}/messages"
