@@ -466,7 +466,7 @@ async def webhook(request: Request):
                 kb_text = "\n".join([kb.content for kb in kb_entries]) if kb_entries else ""
 
             if not kb_text.strip():
-                print(f"[WARNING] No knowledge base content for chatbot {phone_number_id}")
+                print(f"[WARNING] No knowledge base content for chatbot {display_number}")
                 return JSONResponse(content={"reply": "Sorry, I have no knowledge to answer this yet."}, status_code=200)
 
             # --- Build temporary vector store per user ---
