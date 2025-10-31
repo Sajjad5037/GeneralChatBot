@@ -262,21 +262,24 @@ async def webhook(request: Request):
             return JSONResponse(content={"error": str(e)}, status_code=500)
 """
 
-@app.route("/webhook", methods=["GET", "POST"])
-def webhook():
+@app.api_route("/webhook", methods=["GET", "POST"])
+async def webhook(request: Request):
     if request.method == "GET":
         # --- Webhook verification ---
-        mode = request.args.get("hub.mode")
-        token = request.args.get("hub.verify_token")
-        challenge = request.args.get("hub.challenge")
+        mode = request.query_params.get("hub.mode")
+        token = request.query_params.get("hub.verify_token")
+        challenge = request.query_params.get("hub.challenge")
+        
         if mode == "subscribe" and token == webhook_verify_token:
             print("Webhook verified successfully!")
             return PlainTextResponse(content=challenge, status_code=200)
+        
+        print("Webhook verification failed")
         return PlainTextResponse(content="Webhook verification failed", status_code=403)
 
     elif request.method == "POST":
         try:
-            data = request.get_json(force=True)
+            data = await request.json()
             print("Received webhook payload:", json.dumps(data, indent=2))
 
             # --- Extract message ---
@@ -286,7 +289,7 @@ def webhook():
             messages = value.get("messages", [])
 
             if not messages:
-                return jsonify({"status": "no message"}), 200
+                return JSONResponse(content={"status": "no message"}, status_code=200)
 
             message = messages[0]
             from_number = message["from"]
@@ -294,7 +297,7 @@ def webhook():
             phone_number_id = value["metadata"]["phone_number_id"]
 
             if not user_text:
-                return jsonify({"status": "empty message"}), 200
+                return JSONResponse(content={"status": "empty message"}, status_code=200)
 
             print(f"Message received from {from_number}: {user_text}")
 
@@ -309,14 +312,16 @@ def webhook():
                             "a full-stack developer from Lahore with expertise in Python, FastAPI, "
                             "and building intelligent systems such as chatbot integrations and "
                             "clinic management tools. "
-                            "You represent Sajjad professionally — you answer politely, "
-                            "explain technical things clearly, and reflect his calm, thoughtful tone. "
-                            "If users ask about Sajjad, tell them he’s a developer focused on "
-                            "AI-powered web apps, problem-solving, and backend design."
+                            "You represent Sajjad professionally — answer politely, explain technical things clearly, "
+                            "and reflect his calm, thoughtful tone. "
+                            "If users ask about Sajjad, tell them he’s a developer focused on AI-powered web apps, "
+                            "problem-solving, and backend design."
                         ),
                     },
                     {"role": "user", "content": user_text}
-                ]
+                ],
+                temperature=0.3,
+                max_tokens=500
             )
 
             bot_reply = completion.choices[0].message.content.strip()
@@ -335,12 +340,14 @@ def webhook():
                 "text": {"body": bot_reply}
             }
 
-            requests.post(api_url, headers=headers, json=payload)
-            return jsonify({"status": "message processed"}), 200
+            resp = requests.post(api_url, headers=headers, json=payload)
+            print("WhatsApp API response:", resp.json())
+
+            return JSONResponse(content={"status": "message processed"}, status_code=200)
 
         except Exception as e:
             print("Error processing webhook:", e)
-            return jsonify({"error": str(e)}), 500
+            return JSONResponse(content={"error": str(e)}, status_code=500)
 
 def send_whatsapp_message(recipient_number, message_text):
     api_url = f"https://graph.facebook.com/v22.0/{whatsapp_phone_number_id}/messages"
