@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Bod
 import json
 from fastapi.responses import JSONResponse,PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import Column, Integer, Text, DateTime, func, create_engine,String
+from sqlalchemy import text,Column, Integer, Text, DateTime, func, create_engine,String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 import os
@@ -329,15 +329,15 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         print("[ERROR] Database session is None! FastAPI did not inject a session.")
         raise HTTPException(status_code=500, detail="Database session is None")
 
-    # Try a dummy query to see if session is live
+    # --- Test DB connection properly ---
     try:
-        _ = db.execute("SELECT 1").fetchone()
+        _ = db.execute(text("SELECT 1")).fetchone()  # wrap raw SQL in text()
         print("[DEBUG] Database connection test: OK ✅")
     except Exception as e:
         print(f"[ERROR] Database connection test failed: {e}")
         raise HTTPException(status_code=500, detail="Database session invalid or closed")
 
-    # Fetch KB for this doctor
+    # --- Fetch KB for this doctor ---
     try:
         print("[DEBUG] Querying KnowledgeBase for user_id:", user_id)
         kb = db.query(KnowledgeBase).filter(KnowledgeBase.user_id == user_id).first()
@@ -352,12 +352,12 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
 
     print(f"[DEBUG] Knowledge base retrieved: id={kb.id}, content_length={len(kb.content)}")
 
-    # Build prompt using doctor's KB
+    # --- Build prompt using doctor's KB ---
     prompt = f"You are Dr. {user_id}. Answer the question based on the knowledge below.\n\nKnowledge:\n{kb.content}\n\nUser: {message}"
     print(f"[DEBUG] Prompt length: {len(prompt)} characters")
 
+    # --- Call OpenAI API ---
     try:
-        # Call OpenAI GPT-4.0-mini
         print("[DEBUG] Sending prompt to OpenAI API...")
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -375,7 +375,6 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
     except Exception as e:
         print(f"[ERROR] OpenAI API call failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
-
 
 @app.post("/api/chat-whatsapp")
 def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depends(get_db)):
