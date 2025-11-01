@@ -142,17 +142,7 @@ async def upload_pdf(
 
 
 # --- Dependency ---
-def get_db():
-    # your DB session creation logic here
-    pass
-
-# --- Database model example ---
-# class WhatsAppKnowledgeBase(Base):
-#     id: int
-#     user_id: int
-#     chatbot_number: str
-#     content: str
-
+    
 @app.post("/api/whatsapp-knowledge-base/upload")
 async def upload_pdf(
     user_id: int = Form(...),            # client/user ID
