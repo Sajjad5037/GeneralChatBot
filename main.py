@@ -337,14 +337,30 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         print(f"[WARNING] No knowledge base found for user_id={user_id}")
         return {"reply": "Sorry, I have no knowledge to answer this yet."}
 
-    print(f"[DEBUG] Knowledge base retrieved: id={kb.id}, content_length={len(kb.content)}")
+    # --- Build temporary vector store if it doesn't exist ---
+    if user_id not in vector_stores:
+        chunks = chunk_text(kb.content, chunk_size=500, overlap=50)
+        embeddings = embed_texts(chunks)
+        vector_stores[user_id] = {"chunks": chunks, "embeddings": np.array(embeddings)}
+        print(f"[DEBUG] Vector store created for user_id={user_id} with {len(chunks)} chunks")
 
-    # Build prompt using doctor's KB
-    prompt = f"You are Dr. {user_id}. Answer the question based on the knowledge below.\n\nKnowledge:\n{kb.content}\n\nUser: {message}"
+    store = vector_stores[user_id]
+
+    # --- Embed the user query ---
+    query_embedding = np.array(embed_texts([message])[0])
+
+    # --- Compute similarities ---
+    sims = cosine_similarity([query_embedding], store["embeddings"])[0]
+    top_idx = sims.argmax()  # get the most similar chunk
+    relevant_chunk = store["chunks"][top_idx]
+    print(f"[DEBUG] Top chunk index: {top_idx}, similarity: {sims[top_idx]:.4f}")
+
+    # --- Build prompt using only relevant chunk ---
+    prompt = f"You are Dr. {user_id}. Answer the question based on the knowledge below.\n\nKnowledge:\n{relevant_chunk}\n\nUser: {message}"
     print(f"[DEBUG] Prompt length: {len(prompt)} characters")
 
     try:
-        # Call OpenAI GPT-4.0-mini
+        # Call OpenAI GPT-4o-mini
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
@@ -360,7 +376,6 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
     except Exception as e:
         print(f"[ERROR] OpenAI API call failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
-
 
 @app.post("/api/chat-whatsapp")
 def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depends(get_db)):
