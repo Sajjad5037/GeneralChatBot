@@ -138,12 +138,8 @@ async def upload_pdf(
     return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully."}
 
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
-from sqlalchemy.orm import Session
-from PyPDF2 import PdfReader
-import io
 
-app = FastAPI()
+
 
 # --- Dependency ---
 def get_db():
