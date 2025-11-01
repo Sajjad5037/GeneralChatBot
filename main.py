@@ -329,10 +329,33 @@ def embed_texts(texts):
 # for clinics, salon etc
 @app.post("/api/chat")
 def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depends(get_db)):
-    print(f"[DEBUG] Received chat request: user_id={user_id}, message='{message}'")
+    print("==============================================")
+    print("[DEBUG] Entered /api/chat endpoint")
+    print(f"[DEBUG] user_id={user_id}, message='{message}'")
+    print(f"[DEBUG] db injected: {db}")
+    print(f"[DEBUG] db type: {type(db)}")
+
+    if db is None:
+        print("[ERROR] Database session is None! FastAPI did not inject a session.")
+        raise HTTPException(status_code=500, detail="Database session is None")
+
+    # Try a dummy query to see if session is live
+    try:
+        _ = db.execute("SELECT 1").fetchone()
+        print("[DEBUG] Database connection test: OK ✅")
+    except Exception as e:
+        print(f"[ERROR] Database connection test failed: {e}")
+        raise HTTPException(status_code=500, detail="Database session invalid or closed")
 
     # Fetch KB for this doctor
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.user_id == user_id).first()
+    try:
+        print("[DEBUG] Querying KnowledgeBase for user_id:", user_id)
+        kb = db.query(KnowledgeBase).filter(KnowledgeBase.user_id == user_id).first()
+        print("[DEBUG] Query executed successfully.")
+    except Exception as e:
+        print(f"[ERROR] Query to KnowledgeBase failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Database query failed: {e}")
+
     if not kb:
         print(f"[WARNING] No knowledge base found for user_id={user_id}")
         return {"reply": "Sorry, I have no knowledge to answer this yet."}
@@ -345,6 +368,7 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
 
     try:
         # Call OpenAI GPT-4.0-mini
+        print("[DEBUG] Sending prompt to OpenAI API...")
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
@@ -355,11 +379,13 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         bot_reply = response.choices[0].message.content
         print(f"[DEBUG] Bot reply length: {len(bot_reply)} characters")
 
+        print("[DEBUG] Returning successful response ✅")
         return {"reply": bot_reply}
 
     except Exception as e:
         print(f"[ERROR] OpenAI API call failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
+
 
 @app.post("/api/chat-whatsapp")
 def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depends(get_db)):
