@@ -136,7 +136,17 @@ async def upload_pdf(
     db.refresh(kb)
     print(f"[DEBUG] Knowledge base saved: id={kb.id}, user_id={kb.user_id}, content_length={len(text)}")
 
-    return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully."}
+    # ----- Recreate temporary vector store -----
+    if user_id in vector_stores:
+        print(f"[DEBUG] Deleting existing temporary vector store for user_id={user_id}")
+        del vector_stores[user_id]
+
+    chunks = chunk_text(kb.content, chunk_size=500, overlap=50)
+    embeddings = embed_texts(chunks)
+    vector_stores[user_id] = {"chunks": chunks, "embeddings": np.array(embeddings)}
+    print(f"[DEBUG] New vector store created for user_id={user_id} with {len(chunks)} chunks")
+
+    return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully and vector store rebuilt."}
 
 
 
