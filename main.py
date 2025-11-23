@@ -71,6 +71,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Chatbot KB Backend")
 
 # Enable CORS for frontend
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -144,12 +145,11 @@ async def upload_pdf(
 # --- Dependency ---
 @app.post("/api/whatsapp-knowledge-base/upload")
 async def upload_pdf(
-    user_id: int = Form(...),                # Required (React sends this)
-    file: UploadFile = File(...),            # Required (React sends this)
-    chatbot_number: str = Form("default"),   # Optional (React does NOT send this)
+    user_id: int = Form(...),            # Required (sent by frontend)
+    file: UploadFile = File(...),        # Required (sent by frontend)
     db: Session = Depends(get_db)
 ):
-    print(f"[DEBUG] Upload request: user_id={user_id}, chatbot_number={chatbot_number}, filename={file.filename}")
+    print(f"[DEBUG] Upload request: user_id={user_id}, filename={file.filename}")
 
     # ----- Extract PDF text -----
     try:
@@ -176,8 +176,7 @@ async def upload_pdf(
 
     # ----- Find existing KB or create new -----
     kb = db.query(WhatsAppKnowledgeBase).filter(
-        WhatsAppKnowledgeBase.user_id == user_id,
-        WhatsAppKnowledgeBase.chatbot_number == chatbot_number
+        WhatsAppKnowledgeBase.user_id == user_id
     ).first()
 
     if kb:
@@ -187,7 +186,6 @@ async def upload_pdf(
         print("[DEBUG] Creating new KB entry")
         kb = WhatsAppKnowledgeBase(
             user_id=user_id,
-            chatbot_number=chatbot_number,
             content=text
         )
         db.add(kb)
@@ -195,14 +193,12 @@ async def upload_pdf(
     db.commit()
     db.refresh(kb)
 
-    print(f"[DEBUG] KB saved: id={kb.id}, user_id={kb.user_id}, chatbot_number={kb.chatbot_number}")
+    print(f"[DEBUG] KB saved: id={kb.id}, user_id={kb.user_id}")
 
     return {
         "knowledge_base_id": kb.id,
         "message": "PDF knowledge base uploaded successfully."
     }
-    
-
 
 
 """
