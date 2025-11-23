@@ -383,7 +383,7 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
     print(f"[DEBUG] Received chat request: user_id={user_id}, message='{message}'")
 
     # Fetch KB for this doctor
-    kb = db.query(KnowledgeBase).filter(KnowledgeBase.user_id == user_id).first()
+    kb = db.query(WhatsAppKnowledgeBase).filter(WhatsAppKnowledgeBase.user_id == user_id).first()
     if not kb:
         print(f"[WARNING] No knowledge base found for user_id={user_id}")
         return {"reply": "Sorry, I have no knowledge to answer this yet."}
