@@ -1,5 +1,9 @@
 # backend/main.py
 
+import hashlib
+
+
+
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Body, Request
 import json
 from fastapi.responses import JSONResponse,PlainTextResponse
@@ -389,7 +393,11 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
 
 @app.post("/api/chat-whatsapp")
-def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depends(get_db)):
+def chat(
+    message: str = Body(...),
+    user_id: int = Body(...),
+    db: Session = Depends(get_db)
+):
     print(f"[DEBUG] Received chat request: user_id={user_id}, message='{message}'")
 
     # Fetch KB for this doctor
@@ -398,12 +406,19 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         print(f"[WARNING] No knowledge base found for user_id={user_id}")
         return {"reply": "Sorry, I have no knowledge to answer this yet."}
 
-    # --- Build temporary vector store if it doesn't exist ---
-    if user_id not in vector_stores:
+    # Compute hash of current KB content
+    kb_hash = hashlib.md5(kb.content.encode("utf-8")).hexdigest()
+
+    # --- Build or rebuild vector store if it doesn't exist or KB changed ---
+    if (user_id not in vector_stores) or (vector_stores[user_id].get("kb_hash") != kb_hash):
         chunks = chunk_text(kb.content, chunk_size=500, overlap=50)
         embeddings = embed_texts(chunks)
-        vector_stores[user_id] = {"chunks": chunks, "embeddings": np.array(embeddings)}
-        print(f"[DEBUG] Vector store created for user_id={user_id} with {len(chunks)} chunks")
+        vector_stores[user_id] = {
+            "chunks": chunks,
+            "embeddings": np.array(embeddings),
+            "kb_hash": kb_hash
+        }
+        print(f"[DEBUG] Vector store created/rebuilt for user_id={user_id} with {len(chunks)} chunks")
 
     store = vector_stores[user_id]
 
@@ -437,6 +452,7 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
     except Exception as e:
         print(f"[ERROR] OpenAI API call failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
+        
 
 #IMPLEMENTING ENDPOINTS FOR WHATS APP CHATBOT
 def get_relevant_context(kb_text: str, user_query: str, top_k: int = 3) -> str:
