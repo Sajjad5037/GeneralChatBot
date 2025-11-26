@@ -3,6 +3,10 @@ fastapi>=0.118.0
 uvicorn[standard]>=0.23.0
 flask>=2.3.3
 
+#pydantic
+pydantic>=1.10.0
+
+
 # Database
 sqlalchemy>=2.0.20
 psycopg2-binary>=2.9.9
