@@ -2,7 +2,7 @@
 
 import hashlib
 
-
+from pydantic import BaseModel
 
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Body, Request
 import json
