@@ -422,7 +422,8 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
     print(f"[DEBUG] Knowledge base retrieved: id={kb.id}, content_length={len(kb.content)}")
 
     # --- Build prompt using doctor's KB ---
-    prompt = f"You are Dr. {user_id}. Answer the question based on the knowledge below.\n\nKnowledge:\n{kb.content}\n\nUser: {message}"
+    prompt = f"You are Dr. {user_id}. Answer the question concisely based on the knowledge below.\n\nKnowledge:\n{kb.content}\n\nUser: {message}\n\nInstructions: Provide a brief summary in 2-3 sentences. Avoid long paragraphs."
+
     print(f"[DEBUG] Prompt length: {len(prompt)} characters")
 
     # --- Call OpenAI API ---
@@ -485,7 +486,15 @@ def chat(
     print(f"[DEBUG] Top chunk index: {top_idx}, similarity: {sims[top_idx]:.4f}")
 
     # --- Build prompt using only relevant chunk ---
-    prompt = f"You are Dr. {user_id}. Answer the question based on the knowledge below.\n\nKnowledge:\n{relevant_chunk}\n\nUser: {message}"
+    prompt = f"""You are Dr. {user_id}. Answer the question concisely based on the knowledge below.
+
+    Knowledge:
+    {relevant_chunk}
+    
+    User: {message}
+    
+    Instructions: Provide a brief, 1–2 sentence answer. Avoid long explanations."""
+
     print(f"[DEBUG] Prompt length: {len(prompt)} characters")
 
     try:
