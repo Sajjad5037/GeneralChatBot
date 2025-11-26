@@ -205,7 +205,16 @@ async def save_doctor(session_data: SessionData, db: Session = Depends(get_db)):
     db.refresh(db_session)
     return {"message": "Session saved successfully", "session_id": db_session.id}
         
-
+@app.get("/get-doctor-id/")
+def get_doctor_id(session_token: str = Query(..., description="Session token"), db: Session = Depends(get_db)):
+    """
+    Given a session_token, return the corresponding doctor_id.
+    """
+    db_session = db.query(SessionModel).filter(SessionModel.session_token == session_token).first()
+    if not db_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {"doctor_id": db_session.id}
 
 
 
