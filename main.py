@@ -68,14 +68,13 @@ class Session(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-# --- Pydantic model for request validation ---
-class DoctorData(BaseModel):
-    id: int
+class SessionData(BaseModel):
+    id: int | None = None  # optional if updating
     name: str
-    message: str
+    message: str | None = None
     public_token: str
     session_token: str
-    specialization: str
+    specialization: str | None = None
 
 class WhatsAppKnowledgeBase(Base):
     __tablename__ = "WhatsAppknowledgebases"
@@ -177,34 +176,34 @@ async def upload_pdf(
 
 
 @app.post("/save-doctor")
-async def save_doctor(doctor: DoctorData, db: DBSession = Depends(get_db)):
-    try:
-        # Check if session already exists
-        existing = db.query(DoctorSession).filter(DoctorSession.id == doctor.id).first()
-        if existing:
-            # Update existing record
-            existing.name = doctor.name
-            existing.message = doctor.message
-            existing.public_token = doctor.public_token
-            existing.session_token = doctor.session_token
-            existing.specialization = doctor.specialization
-        else:
-            # Insert new record
-            new_session = DoctorSession(
-                id=doctor.id,
-                name=doctor.name,
-                message=doctor.message,
-                public_token=doctor.public_token,
-                session_token=doctor.session_token,
-                specialization=doctor.specialization
-            )
-            db.add(new_session)
+async def save_doctor(session_data: SessionData, db: Session = Depends(get_db)):
+    """
+    Save a new session record (or update if id exists).
+    """
+    if session_data.id:
+        # Update existing record
+        db_session = db.query(SessionModel).filter(SessionModel.id == session_data.id).first()
+        if not db_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        db_session.name = session_data.name
+        db_session.message = session_data.message
+        db_session.public_token = session_data.public_token
+        db_session.session_token = session_data.session_token
+        db_session.specialization = session_data.specialization
+    else:
+        # Create new session record
+        db_session = SessionModel(
+            name=session_data.name,
+            message=session_data.message,
+            public_token=session_data.public_token,
+            session_token=session_data.session_token,
+            specialization=session_data.specialization,
+        )
+        db.add(db_session)
 
-        db.commit()
-        return {"success": True}
-    except Exception as e:
-        db.rollback()
-        return {"success": False, "error": str(e)}
+    db.commit()
+    db.refresh(db_session)
+    return {"message": "Session saved successfully", "session_id": db_session.id}
         
 
 
