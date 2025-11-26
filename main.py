@@ -38,6 +38,7 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://postgres:password@localhost:5432/chatbot_db"
 )
+
 print(f"[DEBUG] Connecting to database at: {DATABASE_URL}")
 
 engine = create_engine(DATABASE_URL)
@@ -54,6 +55,27 @@ class KnowledgeBase(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class Session(Base):
+    __tablename__ = "sessions"  # table name changed
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    message = Column(Text, nullable=True)
+    public_token = Column(String, nullable=False, unique=True)
+    session_token = Column(String, nullable=False, unique=True)
+    specialization = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+# --- Pydantic model for request validation ---
+class DoctorData(BaseModel):
+    id: int
+    name: str
+    message: str
+    public_token: str
+    session_token: str
+    specialization: str
 
 class WhatsAppKnowledgeBase(Base):
     __tablename__ = "WhatsAppknowledgebases"
@@ -151,6 +173,39 @@ async def upload_pdf(
     print(f"[DEBUG] New vector store created for user_id={user_id} with {len(chunks)} chunks")
 
     return {"knowledge_base_id": kb.id, "message": "PDF content saved successfully and vector store rebuilt."}
+
+
+
+@app.post("/save-doctor")
+async def save_doctor(doctor: DoctorData, db: DBSession = Depends(get_db)):
+    try:
+        # Check if session already exists
+        existing = db.query(DoctorSession).filter(DoctorSession.id == doctor.id).first()
+        if existing:
+            # Update existing record
+            existing.name = doctor.name
+            existing.message = doctor.message
+            existing.public_token = doctor.public_token
+            existing.session_token = doctor.session_token
+            existing.specialization = doctor.specialization
+        else:
+            # Insert new record
+            new_session = DoctorSession(
+                id=doctor.id,
+                name=doctor.name,
+                message=doctor.message,
+                public_token=doctor.public_token,
+                session_token=doctor.session_token,
+                specialization=doctor.specialization
+            )
+            db.add(new_session)
+
+        db.commit()
+        return {"success": True}
+    except Exception as e:
+        db.rollback()
+        return {"success": False, "error": str(e)}
+        
 
 
 
@@ -487,6 +542,22 @@ def get_relevant_context(kb_text: str, user_query: str, top_k: int = 3) -> str:
     # Combine retrieved chunks into a single string
     context = "\n".join([r.page_content for r in results])
     return context
+
+# Endpoint to get doctor ID from sessionToken
+@app.get("/get-doctor-id/{session_token}")
+async def get_doctor_id(session_token: str):
+    doctor = next((d for d in doctors if d["sessionToken"] == session_token), None)
+    if doctor:
+        return {"doctor_id": doctor["id"]}
+    raise HTTPException(status_code=404, detail="Doctor not found for this session token")
+
+# Endpoint to get doctor name from doctor ID
+@app.get("/get-doctor-name/{doctor_id}")
+async def get_doctor_name(doctor_id: int):
+    doctor = next((d for d in doctors if d["id"] == doctor_id), None)
+    if doctor:
+        return {"doctor_name": doctor["name"]}
+    raise HTTPException(status_code=404, detail="Doctor not found for this ID")
 
 @app.api_route("/webhook", methods=["GET", "POST"])
 async def webhook(request: Request):
