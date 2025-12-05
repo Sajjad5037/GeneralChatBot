@@ -74,14 +74,27 @@ class ChatbotLink(Base):
     
 
 class Session(Base):
-    __tablename__ = "sessions"  # table name changed
+    __tablename__ = "sessions"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    message = Column(Text, nullable=True)
-    public_token = Column(String, nullable=False, unique=True)
+
+    # Link to the user who owns this chatbot/session
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # Tokens
     session_token = Column(String, nullable=False, unique=True)
+    public_token = Column(String, nullable=False, unique=True)
+
+    # Optional descriptive fields
+    name = Column(String, nullable=True)
     specialization = Column(String, nullable=True)
+    message = Column(Text, nullable=True)
+
+    # 🔐 Password protection fields for the chatbot
+    require_password = Column(Boolean, default=False)
+    access_password = Column(String, nullable=True)   # store HASHED password
+
+    # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -210,29 +223,42 @@ def chatbot_init(public_token: str, db: Session = Depends(get_db)):
     print("\n========== DEBUG: /chatbot/init CALLED ==========")
     print("Incoming public_token:", public_token)
 
-    bot = db.query(ChatbotLink).filter(
-        ChatbotLink.public_token == public_token
+    # --------------------------------------------------------
+    # Fetch session record using the public_token
+    # --------------------------------------------------------
+    session_record = db.query(Session).filter(
+        Session.public_token == public_token
     ).first()
 
-    print("DB chatbot fetched:", bot)
+    print("DEBUG: Session lookup result:", session_record)
 
-    if not bot:
-        print("ERROR: Chatbot not found for this public_token")
+    if not session_record:
+        print("ERROR: No session found with this public_token")
         raise HTTPException(status_code=404, detail="Chatbot not found")
 
-    print("require_password =", bot.require_password)
+    # --------------------------------------------------------
+    # Read password protection flags
+    # --------------------------------------------------------
+    requires_password = getattr(session_record, "require_password", False)
+    print("DEBUG: require_password =", requires_password)
 
-    if bot.require_password:
-        print("Chatbot IS password protected → returning requiresPassword=True")
+    if requires_password:
+        print("Chatbot IS password protected — requiresPassword=True")
         print("========== /chatbot/init END ==========\n")
-        return {"requiresPassword": True}
+        return {
+            "requiresPassword": True,
+            "publicToken": public_token
+        }
 
-    print("Chatbot is NOT password protected → returning requiresPassword=False")
+    # Chatbot is public access
+    print("Chatbot is NOT password protected — requiresPassword=False")
     print("========== /chatbot/init END ==========\n")
+
     return {
         "requiresPassword": False,
-        "publicToken": public_token,
+        "publicToken": public_token
     }
+
 
 @app.post("/chatbot/validate-password")
 def validate_password(payload: dict, db: Session = Depends(get_db)):
@@ -711,63 +737,70 @@ def chat_whatsapp(
 
     print(f"Parsed parameters:\n message='{message}'\n public_token={public_token}\n chat_access_token={chat_access_token}")
 
+    # Validate required fields
     if not message or not public_token:
         print("[ERROR] Missing message or public_token")
         raise HTTPException(status_code=400, detail="message and public_token are required")
 
-    # ---------------------------
-    # STEP 1 — Fetch ChatbotLink
-    # ---------------------------
-    bot = db.query(ChatbotLink).filter(ChatbotLink.public_token == public_token).first()
-    print("Fetched ChatbotLink:", bot)
+    # -----------------------------------------------------------
+    # STEP 1 — Lookup session by public_token
+    # -----------------------------------------------------------
+    session_record = db.query(Session).filter(Session.public_token == public_token).first()
+    print("DEBUG: Session lookup result:", session_record)
 
-    if not bot:
-        print("[ERROR] No ChatbotLink found for public_token:", public_token)
+    if not session_record:
+        print(f"[ERROR] No session found for public_token = {public_token}")
         raise HTTPException(status_code=404, detail="Invalid chatbot link")
 
-    # ---------------------------
-    # STEP 2 — Validate Password If Required
-    # ---------------------------
-    print("Chatbot requires_password =", bot.require_password)
+    user_id = session_record.user_id
+    print("DEBUG: Session belongs to user_id =", user_id)
 
-    if bot.require_password:
+    # -----------------------------------------------------------
+    # STEP 2 — Validate password if required
+    # -----------------------------------------------------------
+    requires_password = getattr(session_record, "require_password", False)
+    print("DEBUG: require_password =", requires_password)
+
+    if requires_password:
         print("Password protection is enabled")
 
         if not chat_access_token:
-            print("[ERROR] chat_access_token missing")
+            print("[ERROR] Missing chat_access_token for protected chatbot")
             raise HTTPException(status_code=401, detail="Password required")
 
-        print("chat_access_token provided → allowing access")
+        print("chat_access_token provided → access allowed")
     else:
-        print("Chatbot does NOT require password → allowing public access")
+        print("Chatbot is public → no password needed")
 
-    # ---------------------------
-    # STEP 3 — Fetch doctor’s knowledge base
-    # ---------------------------
-    print("Fetching knowledge base for doctor_id =", bot.doctor_id)
+    # -----------------------------------------------------------
+    # STEP 3 — Fetch WhatsAppKnowledgeBase using user_id
+    # -----------------------------------------------------------
+    print("DEBUG: Fetching KB for user_id =", user_id)
 
-    kb = db.query(WhatsAppKnowledgeBase).filter(WhatsAppKnowledgeBase.user_id == bot.doctor_id).first()
+    kb = db.query(WhatsAppKnowledgeBase).filter(
+        WhatsAppKnowledgeBase.user_id == user_id
+    ).first()
 
     if not kb:
-        print(f"[WARNING] No KB found for doctor_id={bot.doctor_id}")
+        print(f"[WARNING] No KB found for user_id = {user_id}")
         return {"reply": "Sorry, no knowledge base is available yet."}
 
     print("KB fetched successfully. KB size:", len(kb.content), "characters")
 
-    # Compute hash of the KB
+    # Compute hash for caching
     kb_hash = hashlib.md5(kb.content.encode("utf-8")).hexdigest()
     print("KB hash:", kb_hash)
 
-    # ---------------------------
+    # -----------------------------------------------------------
     # STEP 4 — Build or reuse vector store
-    # ---------------------------
-    if (bot.doctor_id not in vector_stores) or (vector_stores[bot.doctor_id]["kb_hash"] != kb_hash):
+    # -----------------------------------------------------------
+    if (user_id not in vector_stores) or (vector_stores[user_id]["kb_hash"] != kb_hash):
         print("Vector store missing or outdated → rebuilding...")
 
         chunks = chunk_text(kb.content, chunk_size=500, overlap=50)
         embeddings = embed_texts(chunks)
 
-        vector_stores[bot.doctor_id] = {
+        vector_stores[user_id] = {
             "chunks": chunks,
             "embeddings": np.array(embeddings),
             "kb_hash": kb_hash
@@ -777,38 +810,38 @@ def chat_whatsapp(
     else:
         print("[DEBUG] Using cached vector store")
 
-    store = vector_stores[bot.doctor_id]
+    store = vector_stores[user_id]
 
-    # ---------------------------
-    # STEP 5 — Embed user query
-    # ---------------------------
+    # -----------------------------------------------------------
+    # STEP 5 — Embed user question and compute similarity
+    # -----------------------------------------------------------
     query_embedding = np.array(embed_texts([message])[0])
     print("Query embedding shape:", query_embedding.shape)
 
     sims = cosine_similarity([query_embedding], store["embeddings"])[0]
     top_idx = sims.argmax()
-    print(f"[DEBUG] Top chunk index = {top_idx}, similarity = {sims[top_idx]:.4f}")
+    print(f"[DEBUG] Most relevant chunk index = {top_idx}, similarity = {sims[top_idx]:.4f}")
 
     relevant_chunk = store["chunks"][top_idx]
 
-    # ---------------------------
+    # -----------------------------------------------------------
     # STEP 6 — Build prompt
-    # ---------------------------
+    # -----------------------------------------------------------
     prompt = f"""
-You are an AI assistant for doctor ID {bot.doctor_id}.
+You are an AI assistant for user ID {user_id}.
 Answer concisely (1–2 sentences) using ONLY the knowledge below.
 
 Knowledge:
 {relevant_chunk}
 
-User: {message}
+User question: {message}
     """.strip()
 
     print(f"[DEBUG] Prompt length = {len(prompt)} characters")
 
-    # ---------------------------
+    # -----------------------------------------------------------
     # STEP 7 — Call OpenAI
-    # ---------------------------
+    # -----------------------------------------------------------
     try:
         print("[DEBUG] Sending prompt to OpenAI...")
 
@@ -829,6 +862,7 @@ User: {message}
         print("[ERROR] OpenAI API failed:", e)
         print("==================== /api/chat-whatsapp ERROR END ====================\n")
         raise HTTPException(status_code=500, detail="Failed to generate AI reply")
+
        
 
 #IMPLEMENTING ENDPOINTS FOR WHATS APP CHATBOT
