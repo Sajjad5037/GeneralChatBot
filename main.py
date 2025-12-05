@@ -2,13 +2,18 @@
 
 import hashlib
 
+
+from passlib.context import CryptContext
+
 from pydantic import BaseModel
 
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Body, Request
 import json
 from fastapi.responses import JSONResponse,PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text,Column, Integer, Text, DateTime, func, create_engine,String
+from sqlalchemy import text,Column, Integer, Text, DateTime, func, create_engine,String, Boolean
+
+
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 import os
@@ -24,7 +29,7 @@ import re
 whatsapp_access_token = os.getenv("WHATSAPP_ACCESS_TOKEN")
 whatsapp_phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 webhook_verify_token = os.getenv("webhook_verify_token")
-
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 
@@ -55,6 +60,17 @@ class KnowledgeBase(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class ChatbotLink(Base):
+    __tablename__ = "chatbot_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+    public_token = Column(String, unique=True, index=True)
+
+    require_password = Column(Boolean, default=False)
+    access_password = Column(String, nullable=True)  # hashed password
+    
 
 class Session(Base):
     __tablename__ = "sessions"  # table name changed
@@ -118,6 +134,164 @@ def get_db():
     finally:
         print("[DEBUG] Closing database session")
         db.close()
+
+
+@app.post("/chatbot/settings")
+def update_chatbot_settings(payload: dict, db: Session = Depends(get_db)):
+    print("\n========== DEBUG: /chatbot/settings CALLED ==========")
+    print("Incoming payload:", payload)
+
+    session_token = payload.get("session_token")
+    public_token = payload.get("public_token")
+    require_password = payload.get("require_password")
+    raw_password = payload.get("password")
+
+    print("Parsed values:")
+    print(" session_token =", session_token)
+    print(" public_token =", public_token)
+    print(" require_password =", require_password)
+    print(" raw_password =", raw_password)
+
+    # ---------------- VERIFY ADMIN SESSION ----------------
+    session = db.query(SessionModel).filter(
+        SessionModel.session_token == session_token
+    ).first()
+
+    print("DB session fetched:", session)
+
+    if not session:
+        print("ERROR: Invalid session token → access denied")
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    # ---------------- FETCH CHATBOT RECORD ----------------
+    bot = db.query(ChatbotLink).filter(
+        ChatbotLink.public_token == public_token
+    ).first()
+
+    print("DB chatbot link fetched:", bot)
+
+    if not bot:
+        print("ERROR: No chatbot link found for this public_token")
+        raise HTTPException(status_code=404, detail="Chatbot link not found")
+
+    # ---------------- UPDATE PASSWORD SETTINGS ----------------
+    print("Updating chatbot settings...")
+
+    bot.require_password = require_password
+    print("require_password updated to:", require_password)
+
+    if require_password:
+        print("Password protection enabled")
+
+        if not raw_password:
+            print("ERROR: Admin enabled password but did not send password")
+            raise HTTPException(
+                status_code=400,
+                detail="Password value required when require_password is true"
+            )
+
+        hashed_pw = pwd_context.hash(raw_password)
+        print("Generated hashed password:", hashed_pw)
+
+        bot.access_password = hashed_pw
+    else:
+        print("Password protection disabled → clearing existing password")
+        bot.access_password = None
+
+    db.commit()
+    print("DB commit successful")
+    print("========== /chatbot/settings END ==========\n")
+
+    return {"message": "Chatbot access settings updated successfully"}
+
+@app.get("/chatbot/init/{public_token}")
+def chatbot_init(public_token: str, db: Session = Depends(get_db)):
+    print("\n========== DEBUG: /chatbot/init CALLED ==========")
+    print("Incoming public_token:", public_token)
+
+    bot = db.query(ChatbotLink).filter(
+        ChatbotLink.public_token == public_token
+    ).first()
+
+    print("DB chatbot fetched:", bot)
+
+    if not bot:
+        print("ERROR: Chatbot not found for this public_token")
+        raise HTTPException(status_code=404, detail="Chatbot not found")
+
+    print("require_password =", bot.require_password)
+
+    if bot.require_password:
+        print("Chatbot IS password protected → returning requiresPassword=True")
+        print("========== /chatbot/init END ==========\n")
+        return {"requiresPassword": True}
+
+    print("Chatbot is NOT password protected → returning requiresPassword=False")
+    print("========== /chatbot/init END ==========\n")
+    return {
+        "requiresPassword": False,
+        "publicToken": public_token,
+    }
+
+@app.post("/chatbot/validate-password")
+def validate_password(payload: dict, db: Session = Depends(get_db)):
+    print("\n========== DEBUG: /chatbot/validate-password CALLED ==========")
+    print("Incoming payload:", payload)
+
+    public_token = payload.get("public_token")
+    entered_password = payload.get("password")
+
+    print("Parsed values:")
+    print(" public_token =", public_token)
+    print(" entered_password =", entered_password)
+
+    bot = db.query(ChatbotLink).filter(
+        ChatbotLink.public_token == public_token
+    ).first()
+
+    print("DB chatbot fetched:", bot)
+
+    if not bot:
+        print("ERROR: Chatbot not found")
+        raise HTTPException(status_code=404, detail="Chatbot not found")
+
+    print("require_password =", bot.require_password)
+    print("stored hashed password =", bot.access_password)
+
+    # If NOT password protected → automatically allow
+    if not bot.require_password:
+        print("Chatbot doesn't require password → auto-allow access")
+        token = str(uuid4())
+        print("Generated chatAccessToken:", token)
+        print("========== /chatbot/validate-password END ==========\n")
+        return {"valid": True, "chatAccessToken": token}
+
+    # Password IS required → verify
+    if not entered_password:
+        print("ERROR: No password entered while required")
+        return {"valid": False}
+
+    print("Verifying entered password...")
+    is_valid = pwd_context.verify(entered_password, bot.access_password)
+
+    print("Password match result:", is_valid)
+
+    if not is_valid:
+        print("ERROR: Password is incorrect")
+        print("========== /chatbot/validate-password END ==========\n")
+        return {"valid": False}
+
+    # Correct password → generate session token
+    chat_token = str(uuid4())
+    print("Password correct → granted access")
+    print("Generated chatAccessToken:", chat_token)
+
+    print("========== /chatbot/validate-password END ==========\n")
+    return {"valid": True, "chatAccessToken": chat_token}
+
+
+
+
 
 # ----------------------------
 # Upload PDF and Save Knowledge Base
@@ -446,6 +620,12 @@ def chat(message: str = Body(...), user_id: int = Body(...), db: Session = Depen
         print(f"[ERROR] OpenAI API call failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
 
+
+# ---------------------------------------------------------------
+# OLD CHAT ENDPOINT — NOW DISABLED (COMMENTED OUT)
+# ---------------------------------------------------------------
+
+"""
 @app.post("/api/chat-whatsapp")
 def chat(
     message: str = Body(...),
@@ -486,14 +666,14 @@ def chat(
     print(f"[DEBUG] Top chunk index: {top_idx}, similarity: {sims[top_idx]:.4f}")
 
     # --- Build prompt using only relevant chunk ---
-    prompt = f"""You are Dr. {user_id}. Answer the question concisely based on the knowledge below.
+    prompt = f'''You are Dr. {user_id}. Answer the question concisely based on the knowledge below.
 
     Knowledge:
     {relevant_chunk}
     
     User: {message}
     
-    Instructions: Provide a brief, 1–2 sentence answer. Avoid long explanations."""
+    Instructions: Provide a brief, 1–2 sentence answer. Avoid long explanations.'''
 
     print(f"[DEBUG] Prompt length: {len(prompt)} characters")
 
@@ -514,7 +694,141 @@ def chat(
     except Exception as e:
         print(f"[ERROR] OpenAI API call failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate reply from OpenAI")
-        
+"""
+@app.post("/api/chat-whatsapp")
+def chat_whatsapp(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db)
+):
+    print("\n==================== DEBUG: /api/chat-whatsapp CALLED ====================")
+    print("Incoming payload:", payload)
+
+    # Extract incoming fields
+    message = payload.get("message")
+    public_token = payload.get("public_token")
+    chat_access_token = payload.get("chat_access_token")
+
+    print(f"Parsed parameters:\n message='{message}'\n public_token={public_token}\n chat_access_token={chat_access_token}")
+
+    if not message or not public_token:
+        print("[ERROR] Missing message or public_token")
+        raise HTTPException(status_code=400, detail="message and public_token are required")
+
+    # ---------------------------
+    # STEP 1 — Fetch ChatbotLink
+    # ---------------------------
+    bot = db.query(ChatbotLink).filter(ChatbotLink.public_token == public_token).first()
+    print("Fetched ChatbotLink:", bot)
+
+    if not bot:
+        print("[ERROR] No ChatbotLink found for public_token:", public_token)
+        raise HTTPException(status_code=404, detail="Invalid chatbot link")
+
+    # ---------------------------
+    # STEP 2 — Validate Password If Required
+    # ---------------------------
+    print("Chatbot requires_password =", bot.require_password)
+
+    if bot.require_password:
+        print("Password protection is enabled")
+
+        if not chat_access_token:
+            print("[ERROR] chat_access_token missing")
+            raise HTTPException(status_code=401, detail="Password required")
+
+        print("chat_access_token provided → allowing access")
+    else:
+        print("Chatbot does NOT require password → allowing public access")
+
+    # ---------------------------
+    # STEP 3 — Fetch doctor’s knowledge base
+    # ---------------------------
+    print("Fetching knowledge base for doctor_id =", bot.doctor_id)
+
+    kb = db.query(WhatsAppKnowledgeBase).filter(WhatsAppKnowledgeBase.user_id == bot.doctor_id).first()
+
+    if not kb:
+        print(f"[WARNING] No KB found for doctor_id={bot.doctor_id}")
+        return {"reply": "Sorry, no knowledge base is available yet."}
+
+    print("KB fetched successfully. KB size:", len(kb.content), "characters")
+
+    # Compute hash of the KB
+    kb_hash = hashlib.md5(kb.content.encode("utf-8")).hexdigest()
+    print("KB hash:", kb_hash)
+
+    # ---------------------------
+    # STEP 4 — Build or reuse vector store
+    # ---------------------------
+    if (bot.doctor_id not in vector_stores) or (vector_stores[bot.doctor_id]["kb_hash"] != kb_hash):
+        print("Vector store missing or outdated → rebuilding...")
+
+        chunks = chunk_text(kb.content, chunk_size=500, overlap=50)
+        embeddings = embed_texts(chunks)
+
+        vector_stores[bot.doctor_id] = {
+            "chunks": chunks,
+            "embeddings": np.array(embeddings),
+            "kb_hash": kb_hash
+        }
+
+        print(f"[DEBUG] Vector store rebuilt with {len(chunks)} chunks")
+    else:
+        print("[DEBUG] Using cached vector store")
+
+    store = vector_stores[bot.doctor_id]
+
+    # ---------------------------
+    # STEP 5 — Embed user query
+    # ---------------------------
+    query_embedding = np.array(embed_texts([message])[0])
+    print("Query embedding shape:", query_embedding.shape)
+
+    sims = cosine_similarity([query_embedding], store["embeddings"])[0]
+    top_idx = sims.argmax()
+    print(f"[DEBUG] Top chunk index = {top_idx}, similarity = {sims[top_idx]:.4f}")
+
+    relevant_chunk = store["chunks"][top_idx]
+
+    # ---------------------------
+    # STEP 6 — Build prompt
+    # ---------------------------
+    prompt = f"""
+You are an AI assistant for doctor ID {bot.doctor_id}.
+Answer concisely (1–2 sentences) using ONLY the knowledge below.
+
+Knowledge:
+{relevant_chunk}
+
+User: {message}
+    """.strip()
+
+    print(f"[DEBUG] Prompt length = {len(prompt)} characters")
+
+    # ---------------------------
+    # STEP 7 — Call OpenAI
+    # ---------------------------
+    try:
+        print("[DEBUG] Sending prompt to OpenAI...")
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=300
+        )
+
+        bot_reply = response.choices[0].message.content
+        print("[DEBUG] OpenAI response length:", len(bot_reply))
+
+        print("==================== /api/chat-whatsapp END ====================\n")
+        return {"reply": bot_reply}
+
+    except Exception as e:
+        print("[ERROR] OpenAI API failed:", e)
+        print("==================== /api/chat-whatsapp ERROR END ====================\n")
+        raise HTTPException(status_code=500, detail="Failed to generate AI reply")
+       
 
 #IMPLEMENTING ENDPOINTS FOR WHATS APP CHATBOT
 def get_relevant_context(kb_text: str, user_query: str, top_k: int = 3) -> str:
