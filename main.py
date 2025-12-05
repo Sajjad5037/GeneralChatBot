@@ -2,6 +2,7 @@
 
 import hashlib
 
+from sqlalchemy import ForeignKey
 
 
 from passlib.context import CryptContext
