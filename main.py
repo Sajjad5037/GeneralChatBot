@@ -2,6 +2,7 @@
 
 import hashlib
 
+from models import SessionModel
 
 from passlib.context import CryptContext
 
